@@ -1,0 +1,50 @@
+{
+    "name": "phpexperts/composer-version-constraints",
+    "description": "A clean-room implementation of Composer's version constraints parser.",
+    "keywords": [
+        "composer",
+        "version constraints",
+        "semver"
+    ],
+    "homepage": "https://www.phpexperts.pro/",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "PHP Experts, Inc.",
+            "homepage": "https://www.phpexperts.pro/"
+        },
+        {
+            "name": "Theodore R. Smith",
+            "homepage": "https://www.linkedin.com/in/tedrsmith"
+        }
+    ],
+    "require": {
+        "php": ">=8.1",
+        "ext-json": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "*",
+        "phpstan/phpstan": "*",
+        "friendsofphp/php-cs-fixer": "*",
+        "symfony/var-dumper": "*",
+        "povils/phpmnd": "*",
+        "squizlabs/php_codesniffer": "*",
+        "phpexperts/dockerize": "^12.2"
+    },
+    "autoload": {
+        "psr-4": {
+            "PHPExperts\\ComposerVersionConstraints\\" : "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": { "PHPExperts\\ComposerVersionConstraints\\Tests\\" : "tests/" }
+    },
+    "config": {
+        "classmap-authoritative": true
+    },
+    "scripts": {
+        "post-create-project-cmd": [
+            "PHP_VERSION=native php install.php"
+        ]
+    }
+}
