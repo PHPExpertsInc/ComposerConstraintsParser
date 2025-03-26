@@ -54,18 +54,27 @@ class ComposerConstraintsHelperTest extends TestCase
         }
     }
 
-    /**
-     * PHP version matching function as defined earlier
-     */
-    private function matchesVersion($constraint, $version): bool
+    private function ensure2Dots(string $version): string
+    {
+        $versionParts = explode('.', $version);
+        if (count($versionParts) < 3) {
+            $version .= str_repeat('.0', 3 - count($versionParts));
+        }
+
+        return $version;
+    }
+
+    private function versionSatisfies(string $constraints, string $version): bool
     {
         // Apparently this is an edge case and means the same as "*".
-        if ($constraint === 'x') {
+        if ($constraints === 'x') {
             return true;
         }
 
+        $version = $this->ensure2Dots($version);
+
         // Split constraint by OR operator
-        $orConstraints = explode('|', $constraint);
+        $orConstraints = explode('|', $constraints);
 
         foreach ($orConstraints as $singleConstraint) {
             $singleConstraint = trim($singleConstraint);
@@ -139,12 +148,8 @@ class ComposerConstraintsHelperTest extends TestCase
                 // Handle the special case for ^0
                 if ($baseVersion === '0' || $baseVersion === '0.0' || $baseVersion === '0.0.0') {
                     // ^0 means >=0.0.0 <1.0.0
-// Ensure $version has three components before comparison
-                    $versionParts = explode('.', $version);
-                    while (count($versionParts) < 3) {
-                        $versionParts[] = '0';
-                    }
-                    $normalizedVersion = implode('.', $versionParts);
+                    // Ensure $version has three components before comparison
+                    $normalizedVersion = $this->ensure2Dots($baseVersion);
 
                     if (version_compare($normalizedVersion, '0.0.0', '>=')) {
                         if (version_compare($normalizedVersion, '1.0.0', '<')) {
@@ -167,8 +172,10 @@ class ComposerConstraintsHelperTest extends TestCase
                     $majorVersion = (int)$baseVersion;
                     $nextMajor = ($majorVersion + 1) . '.0';
 
-                    if (version_compare($version, $baseVersion, '>=') &&
-                        version_compare($version, $nextMajor, '<')) {
+                    $localBaseVersion = $this->ensure2Dots($baseVersion);
+                    $localNextVersion = $this->ensure2Dots($nextMajor);
+                    if (version_compare($version, $localBaseVersion, '>=') &&
+                        version_compare($version, $localNextVersion, '<')) {
                         return true;
                     }
                 }
@@ -189,16 +196,12 @@ class ComposerConstraintsHelperTest extends TestCase
             }
 
             // Handle ranges - updated to support single numbers
-            if (preg_match('/^([><=]+)(\d+(\.\d+(\.\d+)?)?)$/', $singleConstraint, $matches)) {
+            if (preg_match('/^([><=]+)(\d+(?:\.\d+){1,2})$/', $singleConstraint, $matches)) {
                 $operator = $matches[1];
                 $versionToCompare = $matches[2];
 
                 // Normalize single number to use proper version format
-                if (preg_match('/^\d+$/', $versionToCompare)) {
-                    $versionToCompare .= '.0.0';
-                } elseif (preg_match('/^\d+\.\d+$/', $versionToCompare)) {
-                    $versionToCompare .= '.0';
-                }
+                $versionToCompare = $this->ensure2Dots($versionToCompare);
 
                 if (version_compare($version, $versionToCompare, $operator)) {
                     return true;
@@ -217,11 +220,7 @@ class ComposerConstraintsHelperTest extends TestCase
                         $versionToCompare = $matches[2];
 
                         // Normalize single number to use proper version format
-                        if (preg_match('/^\d+$/', $versionToCompare)) {
-                            $versionToCompare .= '.0.0';
-                        } elseif (preg_match('/^\d+\.\d+$/', $versionToCompare)) {
-                            $versionToCompare .= '.0';
-                        }
+                        $versionToCompare = $this->ensure2Dots($versionToCompare);
 
                         if (!version_compare($version, $versionToCompare, $operator)) {
                             $matches = false;
@@ -234,7 +233,55 @@ class ComposerConstraintsHelperTest extends TestCase
                     return true;
                 }
             }
+
+            // Handle complex ranges like >=7.2 <8.0
+            if (str_contains($singleConstraint, ' ')) {
+                $rangeParts = explode(' ', $singleConstraint);
+                $matchesAllConditions = true;
+
+                foreach ($rangeParts as $condition) {
+                    $condition = trim($condition); // Trim whitespace around individual conditions
+
+                    if (!$this->matchesSingleCondition($condition, $version)) {
+                        $matchesAllConditions = false;
+                        break;
+                    }
+                }
+
+                if ($matchesAllConditions) {
+                    return true;
+                }
+            }
         }
+
+        return false;
+    }
+
+    /**
+     * Matches a single condition against a version.
+     *
+     * @param string $condition Single condition (e.g., '>=2.2').
+     * @param string $version Version to check against.
+     *
+     * @return bool True if the version satisfies the condition, false otherwise.
+     */
+    private function matchesSingleCondition($condition, $version): bool
+    {
+        if (preg_match('/^([><=!]=?|<=|>=)\s*(\d+(\.\d+(\.\d+)?)?)$/', $condition, $matches)) {
+            $operator = $matches[1];
+            $versionToCompare = $matches[2];
+
+            // Normalize single number to use proper version format
+            if (preg_match('/^\d+$/', $versionToCompare)) {
+                $versionToCompare .= '.0.0';
+            } elseif (preg_match('/^\d+\.\d+$/', $versionToCompare)) {
+                $versionToCompare .= '.0';
+            }
+
+            return version_compare($version, $versionToCompare, $operator);
+        }
+
+        // Additional checks here if needed...
 
         return false;
     }
@@ -315,7 +362,7 @@ class ComposerConstraintsHelperTest extends TestCase
 
             // Generate a candidate version that fits the constraint if possible.
             $validCandidate = $this->generateValidCandidate($part);
-            $isValid = $this->matchesVersion($part, $validCandidate);
+            $isValid = $this->versionSatisfies($part, $validCandidate);
 
             // If we want matching versions and the candidate is valid, or vice versa,
             // we add it to our results.
@@ -327,7 +374,7 @@ class ComposerConstraintsHelperTest extends TestCase
                 // Otherwise, try generating an "opposite" candidate version.
                 $candidate = $this->generateOppositeCandidate($part, empty($matches));
                 // Double-check that the candidate fulfills the intended condition.
-                if ($this->matchesVersion($part, $candidate) === empty($matches)) {
+                if ($this->versionSatisfies($part, $candidate) === empty($matches)) {
                     $results[$part] = $candidate;
                 }
             }
@@ -616,6 +663,7 @@ class ComposerConstraintsHelperTest extends TestCase
     public function testComplexComposerConstraints()
     {
         $constraints = [
+            "^3",
             "^2 <3",
             'v3.x',
             '^0.',
@@ -639,13 +687,13 @@ class ComposerConstraintsHelperTest extends TestCase
         ];
 
         foreach ($constraints as $constraint) {
-//            $versionsToMatch = $this->generateVersionForConstraint($constraint, true);
+            $versionsToMatch = $this->generateVersionForConstraint($constraint, true);
             if (empty($versionsToMatch)) {
                 $versionsToMatch = $this->generateValidVersionsForConstraint($constraint);
             }
 
             foreach ($versionsToMatch as $constraint => $version) {
-                self::assertTrue($this->matchesVersion($constraint, $version));
+                self::assertTrue($this->versionSatisfies($constraint, $version));
             }
 //            dd($versionsToMatch);
 //            $versionsToMiss = $this->generateVersionForConstraint($constraint, false);
@@ -665,13 +713,17 @@ class ComposerConstraintsHelperTest extends TestCase
         $constraints = array_chunk($constraints, 20);
 
         foreach ($constraints as $i => $localSet) {
+            ++$i;
 
-            dump([$localSet, "Chunk #$i"]);
 //            $localSet = [ '^2 <3'];
-
+//            $localSet = [ '^3' ];
+            $localSet = [ '^3 <3.30' ];
+            dump([$localSet, "Chunk #$i"]);
+// SBS9043FB
             $this->doTestAllComposerConstraints($localSet);
+//            break;
 
-            if ($i >= 108) {
+            if ($i >= 400) {
                 dump("Chunk #$i: Continue??");
                 //sleep(1);
                 usleep(50000);
@@ -709,7 +761,7 @@ class ComposerConstraintsHelperTest extends TestCase
                     $totalTests++;
 
                     // Call our version constraint checker
-                    $result = $this->matchesVersion($constraint, $version);
+                    $result = $this->versionSatisfies($constraint, $version);
 
                     // Since we don't have a reference implementation to compare against,
                     // we're just ensuring the function runs without errors.
@@ -755,7 +807,7 @@ class ComposerConstraintsHelperTest extends TestCase
         ];
 
         foreach ($testCases as $index => [$constraint, $phpVersion, $expected]) {
-            $result = $this->matchesVersion($constraint, $phpVersion);
+            $result = $this->versionSatisfies($constraint, $phpVersion);
             $this->assertSame(
                 $expected,
                 $result,
