@@ -106,10 +106,19 @@ class ComposerConstraintsHelperTest extends TestCase
             return true;
         }
 
-
         // Strip v...
         $constraint = preg_replace('/([><=~^]+)?v/i', '$1', $constraint);
         $version = preg_replace('/v([0-9]+)/i', '$1', $version);
+
+        // Normalize hyphen ranges first
+        $constraint = $this->normalizeHyphenRanges($constraint);
+
+        // Remove spaces around comparison operators (>=, >, <, !=) in the constraint string
+        $constraint = preg_replace('/([><!]=?)\s*/', '$1', $constraint);
+
+        // Convert "* >" to ">" and other normalizations.
+        $constraint = preg_replace('/\* ?([><!]=?)\s*/', '$1', $constraint);
+        $constraint = str_replace('. *', '.*', $constraint);
 
         // If it ends with ".", add a "*".
         // This effects 615 projects as of 2025-03-24.
@@ -168,7 +177,7 @@ class ComposerConstraintsHelperTest extends TestCase
         }
 
         // Handle comparison operators (>, >=, <, <=, =)
-        if (preg_match('/^([><=]+)(\d+(\.\d+)?(\.\d+)?)$/', $constraint, $matches)) {
+        if (preg_match('/^([><=]+)(\d+(\.\d+)?(\.\d+)?)/', $constraint, $matches)) {
             $operator = $matches[1];
             $compareVersion = $this->ensure2Dots($matches[2]);
             return version_compare($version, $compareVersion, $operator);
@@ -265,6 +274,17 @@ class ComposerConstraintsHelperTest extends TestCase
 
     private function generateCandidateForSingleConstraint(string $constraint, bool $matches): string
     {
+        // Normalize hyphen ranges first
+        $constraint = $this->normalizeHyphenRanges($constraint);
+
+        // Remove spaces around comparison operators (>=, >, <, !=) in the constraint string
+        $constraint = preg_replace('/([><!-]=?)\s*/', '$1', $constraint);
+
+        // Convert "* >" to ">" and other normalizations.
+        $constraint = preg_replace('/\* ?([><!]=?)\s*/', '$1', $constraint);
+        $constraint = str_replace('. *', '.*', $constraint);
+
+
         // Split the constraint into parts if it contains multiple conditions (e.g., "^3 <3.30")
         $parts = preg_split('/\s+/', trim($constraint));
         if (count($parts) > 1) {
@@ -330,6 +350,10 @@ class ComposerConstraintsHelperTest extends TestCase
 
         if ($matches) {
             // Return a version in the range, e.g., minVersion or slightly above
+            if ($maxVersion === null) {
+//                dd($matches, $parts);
+                $a = 1;
+            }
             return $minVersion ?? $this->decrementVersion($maxVersion);
         } else {
             // Return a version outside the range, e.g., below min or at/above max
@@ -359,6 +383,7 @@ class ComposerConstraintsHelperTest extends TestCase
     {
         return version_compare($v1, $v2);
     }
+
     private function adjustCandidateForAnd(string $candidate, string $constraint, bool $matches): string
     {
         $parts = explode('.', $candidate);
@@ -666,9 +691,30 @@ class ComposerConstraintsHelperTest extends TestCase
         return $validVersions;
     }
 
+    /**
+     * Converts "5 - 6" to ">= 5.0.0 < 6.0.0".
+     */
+    private function normalizeHyphenRanges(string $constraint): string
+    {
+        // Handle "X - Y" ranges by converting to ">=X <Y"
+        return preg_replace_callback(
+            '/(\d+(?:\.\d+)*)\s*-\s*(\d+(?:\.\d+)*)/',
+            function ($matches) {
+                $lower = $this->ensure2Dots($matches[1]);
+                $upper = $this->ensure2Dots($matches[2]);
+                return ">=$lower <$upper";
+            },
+            $constraint
+        );
+    }
+
     public function testComplexComposerConstraints()
     {
         $constraints = [
+            '>1.1.8',
+            '* >=4',
+            '5 - 6',
+            '> 3',
             '^3 <3.30',
             '5.7.',
             'v3.x',
@@ -725,9 +771,10 @@ class ComposerConstraintsHelperTest extends TestCase
 //            $localSet = [ '^2 <3'];
 //            $localSet = [ '^3' ];
 //            $localSet = [ '^3 <3.30' ];
-            dump([$localSet, "Chunk #$i"]);
+            $localSet = [ '>1.1.8' ];
+//            dump([$localSet, "Chunk #$i"]);
             $this->doTestAllComposerConstraints($localSet);
-//            break;
+            break;
 
             if ($i >= 400) {
                 dump("Chunk #$i: Continue??");
@@ -786,7 +833,7 @@ class ComposerConstraintsHelperTest extends TestCase
 //        $this->assertEmpty($errors, "Encountered " . count($errors) . " errors: " . implode(", ", $errors));
 
         $this->addToAssertionCount($totalTests);
-        echo "Successfully tested {$totalTests} constraint/version combinations.";
+        //echo "Successfully tested {$totalTests} constraint/version combinations.";
     }
 
     /**
