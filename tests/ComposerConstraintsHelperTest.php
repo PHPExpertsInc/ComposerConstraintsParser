@@ -66,195 +66,123 @@ class ComposerConstraintsHelperTest extends TestCase
 
     private function versionSatisfies(string $constraints, string $version): bool
     {
-        // Apparently this is an edge case and means the same as "*".
-        if ($constraints === 'x') {
-            return true;
-        }
-
+        // Normalize version to have at least 3 parts
         $version = $this->ensure2Dots($version);
 
         // Split constraint by OR operator
         $orConstraints = explode('|', $constraints);
 
-        foreach ($orConstraints as $singleConstraint) {
-            $singleConstraint = trim($singleConstraint);
+        foreach ($orConstraints as $orConstraint) {
+            $orConstraint = trim($orConstraint);
 
-            // Always return true for git branch constraints.
-            if (str_ends_with($singleConstraint, '-dev') || str_ends_with($singleConstraint, '-rc')) {
-                return true;
-            }
+            // Split by AND operator (,)
+            $andConstraints = array_map('trim', explode(',', $orConstraint));
+            $allAndSatisfied = true;
 
-            // Otherwise, convert 'x' to '*'
-            if (str_ends_with($singleConstraint, '.x')) {
-                $singleConstraint = str_replace('.x', '.*', $singleConstraint);
-            }
-
-            // Strip the leading "v", as it is extraneous.
-            $singleConstraint = preg_replace('/([><=~^]+)?v/i', '$1', $singleConstraint);
-
-            // If it ends with ".", add a "*".
-            // This effects 615 projects as of 2025-03-24.
-            // @see rinsvent/data2dto
-            if (str_ends_with($singleConstraint, '.')) {
-                //$singleConstraint .= '0';
-                $singleConstraint = substr($singleConstraint, 0, -1);
-            }
-
-            // Handle wildcards
-            if (strpos($singleConstraint, '*') !== false) {
-                // Handle wildcards more carefully
-                $basePattern = str_replace('.', '\.', $singleConstraint);
-                $basePattern = str_replace('*', '(\d+)?', $basePattern);
-                $pattern = '/^' . $basePattern . '$/';
-
-                // If the wildcard is at the very end, also match with or without trailing digits
-                if (substr($singleConstraint, -1) === '*') {
-                    // Extract the version without the wildcard
-                    $baseVersion = rtrim(str_replace('*', '', $singleConstraint), '.');
-
-                    if (strpos($version, $baseVersion) === 0) {
-                        return true;
-                    }
-                }
-
-                if (preg_match($pattern, $version)) {
-                    return true;
-                }
-                continue;
-            }
-
-            // Handle exact version
-            if (preg_match('/^\d+(\.\d+)?(\.\d+)?$/', $singleConstraint)) {
-                // Split both versions into their components
-                $versionParts = explode('.', $version);
-                $constraintParts = explode('.', $singleConstraint);
-
-                // Append zeros to $constraintParts until it has the same number of parts as $versionParts
-                while (count($constraintParts) < count($versionParts)) {
-                    $constraintParts[] = '0';
-                }
-
-                $singleConstraintToCompare = implode('.', $constraintParts);
-
-                if (version_compare($version, $singleConstraintToCompare, '==')) {
-                    return true;
-                }
-                continue;
-            }
-
-            if (strpos($singleConstraint, '^') === 0) {
-                $baseVersion = substr($singleConstraint, 1);
-
-                // Handle the special case for ^0
-                if ($baseVersion === '0' || $baseVersion === '0.0' || $baseVersion === '0.0.0') {
-                    // ^0 means >=0.0.0 <1.0.0
-                    // Ensure $version has three components before comparison
-                    $normalizedVersion = $this->ensure2Dots($baseVersion);
-
-                    if (version_compare($normalizedVersion, '0.0.0', '>=')) {
-                        if (version_compare($normalizedVersion, '1.0.0', '<')) {
-                            return true;
-                        }
-                    }
-                }
-                // Handle ^0.x
-                elseif (preg_match('/^0\.(\d+)/', $baseVersion, $matches)) {
-                    $minorVersion = (int)$matches[1];
-                    $nextMinor = '0.' . ($minorVersion + 1) . '.0';
-
-                    if (version_compare($version, $baseVersion, '>=') &&
-                        version_compare($version, $nextMinor, '<')) {
-                        return true;
-                    }
-                }
-                // Standard ^1.0 or higher
-                else {
-                    $majorVersion = (int)$baseVersion;
-                    $nextMajor = ($majorVersion + 1) . '.0';
-
-                    $localBaseVersion = $this->ensure2Dots($baseVersion);
-                    $localNextVersion = $this->ensure2Dots($nextMajor);
-                    if (version_compare($version, $localBaseVersion, '>=') &&
-                        version_compare($version, $localNextVersion, '<')) {
-                        return true;
-                    }
-                }
-                continue;
-            }
-
-            // Handle tilde (~) operator
-            if (strpos($singleConstraint, '~') === 0) {
-                $baseVersion = substr($singleConstraint, 1);
-                $parts = explode('.', $baseVersion);
-                $nextMinor = $parts[0] . '.' . ((int)($parts[1] ?? 0) + 1);
-
-                if (version_compare($version, $baseVersion, '>=') &&
-                    version_compare($version, $nextMinor, '<')) {
-                    return true;
-                }
-                continue;
-            }
-
-            // Handle ranges - updated to support single numbers
-            if (preg_match('/^([><=]+)(\d+(?:\.\d+){1,2})$/', $singleConstraint, $matches)) {
-                $operator = $matches[1];
-                $versionToCompare = $matches[2];
-
-                // Normalize single number to use proper version format
-                $versionToCompare = $this->ensure2Dots($versionToCompare);
-
-                if (version_compare($version, $versionToCompare, $operator)) {
-                    return true;
-                }
-                continue;
-            }
-
-            // Handle complex ranges like >=7.2 <8.0
-            if (strpos($singleConstraint, ' ') !== false) {
-                $rangeParts = explode(' ', $singleConstraint);
-                $matches = true;
-
-                foreach ($rangeParts as $rangePart) {
-                    if (preg_match('/^([><=]+)(\d+(\.\d+(\.\d+)?)?)$/', $rangePart, $matches)) {
-                        $operator = $matches[1];
-                        $versionToCompare = $matches[2];
-
-                        // Normalize single number to use proper version format
-                        $versionToCompare = $this->ensure2Dots($versionToCompare);
-
-                        if (!version_compare($version, $versionToCompare, $operator)) {
-                            $matches = false;
-                            break;
-                        }
-                    }
-                }
-
-                if ($matches) {
-                    return true;
+            foreach ($andConstraints as $singleConstraint) {
+                if (!$this->satisfiesSingleConstraint($singleConstraint, $version)) {
+                    $allAndSatisfied = false;
+                    break;
                 }
             }
 
-            // Handle complex ranges like >=7.2 <8.0
-            if (str_contains($singleConstraint, ' ')) {
-                $rangeParts = explode(' ', $singleConstraint);
-                $matchesAllConditions = true;
-
-                foreach ($rangeParts as $condition) {
-                    $condition = trim($condition); // Trim whitespace around individual conditions
-
-                    if (!$this->matchesSingleCondition($condition, $version)) {
-                        $matchesAllConditions = false;
-                        break;
-                    }
-                }
-
-                if ($matchesAllConditions) {
-                    return true;
-                }
+            if ($allAndSatisfied) {
+                return true; // If all AND conditions in this OR branch are satisfied, return true
             }
         }
 
         return false;
+    }
+
+    private function satisfiesSingleConstraint(string $constraint, string $version): bool
+    {
+        // Handle edge cases like 'x' or '*'
+        if ($constraint === 'x' || $constraint === '*') {
+            return true;
+        }
+
+        // Always return true for git branch constraints.
+        if (str_ends_with($constraint, '-dev') || str_ends_with($constraint, '-rc')) {
+            return true;
+        }
+
+
+        // Strip v...
+        $constraint = preg_replace('/([><=~^]+)?v/i', '$1', $constraint);
+        $version = preg_replace('/v([0-9]+)/i', '$1', $version);
+
+        // If it ends with ".", add a "*".
+        // This effects 615 projects as of 2025-03-24.
+        // @see rinsvent/data2dto
+        if (str_ends_with($constraint, '.')) {
+            $constraint = substr($constraint, 0, -1);
+        }
+
+
+        // Handle dev/rc suffixes
+        if (str_ends_with($constraint, '-dev') || str_ends_with($constraint, '-rc')) {
+            return true; // Simplified for this example
+        }
+
+        // Replace .x with .*
+//        if (str_ends_with($constraint, '.x')) {
+        $constraint = str_ireplace('.x', '.*', $constraint);
+        //      }
+
+        // Strip leading 'v'
+        $constraint = preg_replace('/([><=~^]+)?v/i', '$1', $constraint);
+
+        // Handle wildcards
+        if (strpos($constraint, '*') !== false) {
+            $pattern = str_replace('.', '\.', $constraint);
+            $pattern = str_replace('*', '(\d+){1,2}', $pattern);
+            return preg_match('/^' . $pattern . '/', $version) === 1;
+        }
+
+        // Handle caret (^)
+        if (strpos($constraint, '^') === 0) {
+            $baseVersion = substr($constraint, 1);
+            $baseVersion = $this->ensure2Dots($baseVersion);
+
+            if (preg_match('/^0\.(\d+)/', $baseVersion, $matches)) {
+                $minor = (int)$matches[1];
+                $nextMinor = "0." . ($minor + 1) . ".0";
+                return version_compare($version, $baseVersion, '>=') &&
+                    version_compare($version, $nextMinor, '<');
+            } elseif (preg_match('/^(\d+)/', $baseVersion, $matches)) {
+                $major = (int)$matches[0];
+                $nextMajor = ($major + 1) . ".0.0";
+                return version_compare($version, $baseVersion, '>=') &&
+                    version_compare($version, $nextMajor, '<');
+            }
+        }
+
+        // Handle tilde (~)
+        if (strpos($constraint, '~') === 0) {
+            $baseVersion = substr($constraint, 1);
+            $parts = explode('.', $baseVersion);
+            $major = (int)($parts[0] ?? 0);
+            $minor = (int)($parts[1] ?? 0);
+            $nextMinor = "$major." . ($minor + 1) . ".0";
+            $baseVersion = $this->ensure2Dots($baseVersion);
+            return version_compare($version, $baseVersion, '>=') &&
+                version_compare($version, $nextMinor, '<');
+        }
+
+        // Handle comparison operators (>, >=, <, <=, =)
+        if (preg_match('/^([><=]+)(\d+(\.\d+)?(\.\d+)?)$/', $constraint, $matches)) {
+            $operator = $matches[1];
+            $compareVersion = $this->ensure2Dots($matches[2]);
+            return version_compare($version, $compareVersion, $operator);
+        }
+
+        // Handle exact version
+        if (preg_match('/^\d+(\.\d+)?(\.\d+)?$/', $constraint)) {
+            $constraint = $this->ensure2Dots($constraint);
+            return version_compare($version, $constraint, '==');
+        }
+
+        return false; // Unknown constraint format
     }
 
     /**
@@ -298,89 +226,96 @@ class ComposerConstraintsHelperTest extends TestCase
      *
      * @return array|int An array of candidate versions or 0 if none could be generated.
      */
-    public function generateVersionForConstraint(string $constraint, bool $matches = true) {
-        // Split the constraint on the pipe symbol and trim each part.
-        $parts = array_map('trim', explode('|', $constraint));
+    public function generateVersionForConstraint(string $constraint, bool $matches = true): array|int
+    {
+        $orParts = array_map('trim', explode('|', $constraint));
         $results = [];
 
-        foreach ($parts as $part) {
-            if ($part === '') { continue; }
-            // Strip out @ from the end.
-            $part = str_contains($part, '@') ? substr($part, 0, strpos($part, '@')) : $part;
-
-            // For '>' constraints, we need a version greater than the base version
-            if (preg_match('/^>(\d+(\.\d+(\.\d+)?)?)$/', $part, $matches)) {
-                $baseVersion = $matches[1];
-
-                // Convert to a full version number
-                if (preg_match('/^\d+$/', $baseVersion)) {
-                    $baseVersion .= '.0.0';
-                } elseif (preg_match('/^\d+\.\d+$/', $baseVersion)) {
-                    $baseVersion .= '.0';
-                }
-
-                // Increase the patch version by 1
-                $versionParts = explode('.', $baseVersion);
-                $versionParts[2] = (int)$versionParts[2] + 1;
-                $results[$part] = implode('.', $versionParts);
+        foreach ($orParts as $part) {
+            if (empty($part)) {
                 continue;
             }
 
-            // For '<' constraints, we need a version less than the base version
-            if (preg_match('/^<(\d+(\.\d+(\.\d+)?)?)$/', $part, $matches)) {
-                $baseVersion = $matches[1];
+            // Split by AND operator (,)
+            $andParts = array_map('trim', explode(',', $part));
+            $candidate = null;
 
-                // Convert to a full version number
-                if (preg_match('/^\d+$/', $baseVersion)) {
-                    $baseVersion .= '.0.0';
-
-                    // For a version like "4.0.0", we want "3.9.9"
-                    $versionParts = explode('.', $baseVersion);
-                    $versionParts[0] = (int)$versionParts[0] - 1;  // Decrease major
-                    $versionParts[1] = 9;  // Max minor
-                    $versionParts[2] = 9;  // Max patch
-                    $results[$part] = implode('.', $versionParts);
-                    continue;
-                }
-
-                // For more specific versions, handle accordingly
-                $versionParts = explode('.', $baseVersion);
-                if (count($versionParts) == 2 || $versionParts[2] == '0') {
-                    if ($versionParts[1] == '0') {
-                        $versionParts[0] = (int)$versionParts[0] - 1;
-                        $versionParts[1] = 9;
-                    } else {
-                        $versionParts[1] = (int)$versionParts[1] - 1;
-                    }
-                    $versionParts[2] = 9;
+            // Handle each AND condition to find a base version
+            foreach ($andParts as $andPart) {
+                $andCandidate = $this->generateCandidateForSingleConstraint($andPart, $matches);
+                if ($candidate === null) {
+                    $candidate = $andCandidate;
                 } else {
-                    $versionParts[2] = (int)$versionParts[2] - 1;
+                    // Adjust candidate to satisfy all AND conditions
+                    $candidate = $this->adjustCandidateForAnd($candidate, $andPart, $matches);
                 }
-                $results[$part] = implode('.', $versionParts);
-                continue;
             }
 
-            // Generate a candidate version that fits the constraint if possible.
-            $validCandidate = $this->generateValidCandidate($part);
-            $isValid = $this->versionSatisfies($part, $validCandidate);
-
-            // If we want matching versions and the candidate is valid, or vice versa,
-            // we add it to our results.
-            if ($matches && $isValid) {
-                $results[$part] = $validCandidate;
-            } elseif (!$matches && !$isValid) {
-                $results[$part] = $validCandidate;
+            if ($candidate && $this->versionSatisfies($part, $candidate) === $matches) {
+                $results[$part] = $candidate;
             } else {
-                // Otherwise, try generating an "opposite" candidate version.
-                $candidate = $this->generateOppositeCandidate($part, empty($matches));
-                // Double-check that the candidate fulfills the intended condition.
-                if ($this->versionSatisfies($part, $candidate) === empty($matches)) {
-                    $results[$part] = $candidate;
+                // If adjustment fails, try an opposite candidate
+                $opposite = $this->generateOppositeCandidate($part, !$matches);
+                if ($this->versionSatisfies($part, $opposite) === $matches) {
+                    $results[$part] = $opposite;
                 }
             }
         }
 
         return empty($results) ? 0 : $results;
+    }
+
+    private function generateCandidateForSingleConstraint(string $constraint, bool $matches): string
+    {
+        $constraint = preg_replace('/^[<>=!~^]+\s*/', '', $constraint);
+
+        if (strpos($constraint, '*') !== false) {
+            return $matches ? str_replace('*', '1', $constraint) : str_replace('*', '0', $constraint);
+        }
+
+        $base = $this->ensure2Dots($constraint);
+
+        if (preg_match('/^[<>=~^]/', $constraint)) {
+            $parts = explode('.', $base);
+            if ($matches) {
+                return $base; // Use base version as-is for >=, ^, ~
+            } else {
+                $parts[0] = (int)$parts[0] - 1; // Decrease major for non-matching
+                return implode('.', $parts);
+            }
+        }
+
+        return $base; // Exact version
+    }
+
+    private function adjustCandidateForAnd(string $candidate, string $constraint, bool $matches): string
+    {
+        $parts = explode('.', $candidate);
+
+        if (preg_match('/^>=(\d+(\.\d+)?(\.\d+)?)/', $constraint, $matches)) {
+            $minVersion = $this->ensure2Dots($matches[1]);
+            if (version_compare($candidate, $minVersion, '<')) {
+                return $minVersion;
+            }
+        } elseif (preg_match('/^<(\d+(\.\d+)?(\.\d+)?)/', $constraint, $matches)) {
+            $maxVersion = $this->ensure2Dots($matches[1]);
+            if (version_compare($candidate, $maxVersion, '>=')) {
+                $parts[2] = (int)$parts[2] - 1; // Decrease patch
+                return implode('.', $parts);
+            }
+        } elseif (strpos($constraint, '^') === 0) {
+            $base = $this->ensure2Dots(substr($constraint, 1));
+            if (version_compare($candidate, $base, '<')) {
+                return $base;
+            }
+        } elseif (strpos($constraint, '~') === 0) {
+            $base = $this->ensure2Dots(substr($constraint, 1));
+            if (version_compare($candidate, $base, '<')) {
+                return $base;
+            }
+        }
+
+        return $candidate;
     }
 
     /**
@@ -663,12 +598,12 @@ class ComposerConstraintsHelperTest extends TestCase
     public function testComplexComposerConstraints()
     {
         $constraints = [
+            '5.7.',
+            'v3.x',
             "^3",
             "^2 <3",
-            'v3.x',
             '^0.',
             '~3.',
-            '5.7.',
             "2.x-dev",
             "2.x",
             "2.X",
@@ -693,7 +628,7 @@ class ComposerConstraintsHelperTest extends TestCase
             }
 
             foreach ($versionsToMatch as $constraint => $version) {
-                self::assertTrue($this->versionSatisfies($constraint, $version));
+                self::assertTrue($this->versionSatisfies($constraint, $version), "The constraint '$constraint' didn't validate against '$version'.");
             }
 //            dd($versionsToMatch);
 //            $versionsToMiss = $this->generateVersionForConstraint($constraint, false);
