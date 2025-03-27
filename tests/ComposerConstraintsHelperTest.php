@@ -125,9 +125,7 @@ class ComposerConstraintsHelperTest extends TestCase
         }
 
         // Replace .x with .*
-//        if (str_ends_with($constraint, '.x')) {
         $constraint = str_ireplace('.x', '.*', $constraint);
-        //      }
 
         // Strip leading 'v'
         $constraint = preg_replace('/([><=~^]+)?v/i', '$1', $constraint);
@@ -267,7 +265,18 @@ class ComposerConstraintsHelperTest extends TestCase
 
     private function generateCandidateForSingleConstraint(string $constraint, bool $matches): string
     {
-        $constraint = preg_replace('/^[<>=!~^]+\s*/', '', $constraint);
+        // Split the constraint into parts if it contains multiple conditions (e.g., "^3 <3.30")
+        $parts = preg_split('/\s+/', trim($constraint));
+        if (count($parts) > 1) {
+            return $this->handleCompoundConstraint($parts, $matches);
+        }
+
+        // Handle single constraint
+        $operator = '';
+        if (preg_match('/^([<>=!~^]+)/', $constraint, $matchesOperator)) {
+            $operator = $matchesOperator[1];
+            $constraint = preg_replace('/^[<>=!~^]+\s*/', '', $constraint);
+        }
 
         if (strpos($constraint, '*') !== false) {
             return $matches ? str_replace('*', '1', $constraint) : str_replace('*', '0', $constraint);
@@ -275,19 +284,81 @@ class ComposerConstraintsHelperTest extends TestCase
 
         $base = $this->ensure2Dots($constraint);
 
-        if (preg_match('/^[<>=~^]/', $constraint)) {
-            $parts = explode('.', $base);
-            if ($matches) {
-                return $base; // Use base version as-is for >=, ^, ~
-            } else {
-                $parts[0] = (int)$parts[0] - 1; // Decrease major for non-matching
-                return implode('.', $parts);
+        switch ($operator) {
+            case '^':
+                $parts = explode('.', $base);
+                if ($matches) {
+                    return $base; // e.g., 3.0.0 for ^3
+                }
+                return ((int)$parts[0] + 1) . '.0.0'; // e.g., 4.0.0 for non-matching ^3
+            case '<':
+                if ($matches) {
+                    return $this->decrementVersion($base); // One step below base
+                }
+                return $base; // Equal to base is non-matching for strict <
+            case '>=':
+                if ($matches) {
+                    return $base; // Base satisfies >=
+                }
+                return $this->decrementVersion($base); // Below base
+            default:
+                return $base; // Exact version
+        }
+    }
+
+    private function handleCompoundConstraint(array $parts, bool $matches): string
+    {
+        // For "^3 <3.30"
+        $minVersion = null;
+        $maxVersion = null;
+
+        foreach ($parts as $part) {
+            if (preg_match('/^([<>=!~^]+)(.*)/', $part, $match)) {
+                $operator = $match[1];
+                $version = $this->ensure2Dots($match[2]);
+
+                if ($operator === '^') {
+                    $minVersion = $version; // e.g., 3.0.0
+                    $maxVersion = ((int)explode('.', $version)[0] + 1) . '.0.0'; // e.g., 4.0.0
+                } elseif ($operator === '<') {
+                    $maxVersion = $version; // e.g., 3.30.0
+                } elseif ($operator === '>=') {
+                    $minVersion = $version;
+                }
             }
         }
 
-        return $base; // Exact version
+        if ($matches) {
+            // Return a version in the range, e.g., minVersion or slightly above
+            return $minVersion ?? $this->decrementVersion($maxVersion);
+        } else {
+            // Return a version outside the range, e.g., below min or at/above max
+            if ($minVersion && $this->versionCompare($minVersion, $maxVersion) < 0) {
+                return $this->decrementVersion($minVersion); // Below min
+            }
+            return $maxVersion; // At or above max
+        }
     }
 
+    private function decrementVersion(string $version): string
+    {
+        $parts = explode('.', $version);
+        $parts[2] = (int)$parts[2] - 1;
+        if ($parts[2] < 0) {
+            $parts[2] = 999;
+            $parts[1] = (int)$parts[1] - 1;
+            if ($parts[1] < 0) {
+                $parts[1] = 99;
+                $parts[0] = (int)$parts[0] - 1;
+            }
+        }
+        return implode('.', $parts);
+    }
+
+    private function versionCompare(string $v1, string $v2): int
+    {
+        return version_compare($v1, $v2);
+    }
     private function adjustCandidateForAnd(string $candidate, string $constraint, bool $matches): string
     {
         $parts = explode('.', $candidate);
@@ -598,6 +669,7 @@ class ComposerConstraintsHelperTest extends TestCase
     public function testComplexComposerConstraints()
     {
         $constraints = [
+            '^3 <3.30',
             '5.7.',
             'v3.x',
             "^3",
@@ -652,9 +724,8 @@ class ComposerConstraintsHelperTest extends TestCase
 
 //            $localSet = [ '^2 <3'];
 //            $localSet = [ '^3' ];
-            $localSet = [ '^3 <3.30' ];
+//            $localSet = [ '^3 <3.30' ];
             dump([$localSet, "Chunk #$i"]);
-// SBS9043FB
             $this->doTestAllComposerConstraints($localSet);
 //            break;
 
