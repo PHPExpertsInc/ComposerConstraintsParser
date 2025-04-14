@@ -46,7 +46,7 @@ class ComposerConstraintsHelperTest extends TestCase
     public function testCanDetermineIfAConstraintIsValid()
     {
         $invalid = [
-            'x'
+            'xasdf'
         ];
 
         foreach ($invalid as $c) {
@@ -69,18 +69,27 @@ class ComposerConstraintsHelperTest extends TestCase
         // Normalize version to have at least 3 parts
         $version = $this->ensure2Dots($version);
 
+        // Convert "* >" to ">" and other normalizations.
+        $constraints = preg_replace('/\* ?([><!]=?)\s*/', '$1', $constraints);
+        $constraints = preg_replace('/^ ?([><!]=?)\s*/', '$1', $constraints);
+        $constraints = str_replace('. *', '.*', $constraints);
+
         // Split constraint by OR operator
-        $orConstraints = explode('|', $constraints);
+        $constraints = str_replace([' ,', ', '], ',', $constraints);
+        $constraints = str_replace([' -', '- '], '-', $constraints);
+        $orConstraints = preg_split('/[|,-]/', $constraints);
 
         foreach ($orConstraints as $orConstraint) {
             $orConstraint = trim($orConstraint);
 
             // Split by AND operator (,)
-            $andConstraints = array_map('trim', explode(',', $orConstraint));
+            $andConstraints = explode(' ', $orConstraint);
+//            $andConstraints = array_map('trim', explode([',', ' '], $orConstraint));
             $allAndSatisfied = true;
 
             foreach ($andConstraints as $singleConstraint) {
-                if (!$this->satisfiesSingleConstraint($singleConstraint, $version)) {
+                $status = $this->satisfiesSingleConstraint($singleConstraint, $version);
+                if (!$status) {
                     $allAndSatisfied = false;
                     break;
                 }
@@ -140,14 +149,14 @@ class ComposerConstraintsHelperTest extends TestCase
         $constraint = preg_replace('/([><=~^]+)?v/i', '$1', $constraint);
 
         // Handle wildcards
-        if (strpos($constraint, '*') !== false) {
+        if (str_contains($constraint, '*')) {
             $pattern = str_replace('.', '\.', $constraint);
             $pattern = str_replace('*', '(\d+){1,2}', $pattern);
             return preg_match('/^' . $pattern . '/', $version) === 1;
         }
 
         // Handle caret (^)
-        if (strpos($constraint, '^') === 0) {
+        if (str_starts_with($constraint, '^')) {
             $baseVersion = substr($constraint, 1);
             $baseVersion = $this->ensure2Dots($baseVersion);
 
@@ -165,7 +174,7 @@ class ComposerConstraintsHelperTest extends TestCase
         }
 
         // Handle tilde (~)
-        if (strpos($constraint, '~') === 0) {
+        if (str_starts_with($constraint, '~')) {
             $baseVersion = substr($constraint, 1);
             $parts = explode('.', $baseVersion);
             $major = (int)($parts[0] ?? 0);
@@ -262,7 +271,7 @@ class ComposerConstraintsHelperTest extends TestCase
                 $results[$part] = $candidate;
             } else {
                 // If adjustment fails, try an opposite candidate
-                $opposite = $this->generateOppositeCandidate($part, !$matches);
+                $opposite = $this->generateAlternativeCandidate($part, !$matches);
                 if ($this->versionSatisfies($part, $opposite) === $matches) {
                     $results[$part] = $opposite;
                 }
@@ -354,7 +363,7 @@ class ComposerConstraintsHelperTest extends TestCase
 //                dd($matches, $parts);
                 $a = 1;
             }
-            return $minVersion ?? $this->decrementVersion($maxVersion);
+            return $minVersion ?? $this->decrementVersion($maxVersion ?? '');
         } else {
             // Return a version outside the range, e.g., below min or at/above max
             if ($minVersion && $this->versionCompare($minVersion, $maxVersion) < 0) {
@@ -466,7 +475,7 @@ class ComposerConstraintsHelperTest extends TestCase
     }
 
     /**
-     * Generate a candidate version that is expected to be the opposite (valid or invalid)
+     * Generate a candidate version that is expected to be an alternative (valid or invalid)
      * relative to the constraint.
      *
      * This implementation simply modifies the major version number.
@@ -476,7 +485,7 @@ class ComposerConstraintsHelperTest extends TestCase
      *
      * @return string A candidate version string.
      */
-    private function generateOppositeCandidate(string $constraintPart, bool $shouldMatch): string {
+    private function generateAlternativeCandidate(string $constraintPart, bool $shouldMatch): string {
         $validCandidate = $this->generateValidCandidate($constraintPart);
 
         // Try to extract the major, minor, and patch parts.
@@ -489,6 +498,10 @@ class ComposerConstraintsHelperTest extends TestCase
                 // If we want a matching version, return the valid candidate.
                 return $validCandidate;
             } else {
+                if (str_starts_with($constraintPart, '>') && str_starts_with($constraintPart, '>=') === false) {
+                    ++$patch;
+                    return "$major.$minor.$patch";
+                }
                 // To generate an invalid candidate, change the major version.
                 // For example, if the candidate is "5.0.1", return "4.0.1".
                 $newMajor = ($major === 0) ? 1 : $major - 1;
@@ -508,6 +521,7 @@ class ComposerConstraintsHelperTest extends TestCase
         }
 
         // Final fallback: if unable to parse, return a hardcoded candidate.
+
         return $shouldMatch ? '1.0.0' : '0.0.1';
     }
 
@@ -711,9 +725,9 @@ class ComposerConstraintsHelperTest extends TestCase
     public function testComplexComposerConstraints()
     {
         $constraints = [
+            '5 - 6',
             '>1.1.8',
             '* >=4',
-            '5 - 6',
             '> 3',
             '^3 <3.30',
             '5.7.',
@@ -758,33 +772,23 @@ class ComposerConstraintsHelperTest extends TestCase
 
     public function testAllComposerConstraints(): void
     {
-//        dd(file_get_contents( __DIR__ . '/constraints.json'));
         $constraints = json_decode(file_get_contents(__DIR__ . '/constraints.json'));
-//dd($constraints);
 
         $constraints = array_reverse($constraints);
-        $constraints = array_chunk($constraints, 20);
+        $constraints = array_chunk($constraints, 25);
 
         foreach ($constraints as $i => $localSet) {
             ++$i;
 
-//            $localSet = [ '^2 <3'];
-//            $localSet = [ '^3' ];
-//            $localSet = [ '^3 <3.30' ];
-            $localSet = [ '>1.1.8' ];
-//            dump([$localSet, "Chunk #$i"]);
             $this->doTestAllComposerConstraints($localSet);
-            break;
 
-            if ($i >= 400) {
-                dump("Chunk #$i: Continue??");
-                //sleep(1);
+            if (self::isDebugOn() && $i >= 1) {
+                //dump([$i => $localSet]);
+                $total = $i * 25;
+                dump("Chunk #$i ({$total})");
                 usleep(50000);
-                //fgets(STDIN);
             }
-
         }
-
     }
 
     /**
@@ -795,7 +799,11 @@ class ComposerConstraintsHelperTest extends TestCase
         $totalTests = 0;
         $errors = [];
         // Test each constraint against each PHP version
-        foreach ($constraints as $constraint) {
+        foreach ($constraints as $index => $constraint) {
+//            if ($index < 626) {
+//                continue;
+//            }
+
             // Skip invalid constraints
             if (empty($constraint) || !is_string($constraint)) {
                 continue;
@@ -810,6 +818,7 @@ class ComposerConstraintsHelperTest extends TestCase
 
             try {
                 $validVersions = $this->generateVersionForConstraint($constraint);
+                if (self::isDebugOn()) { dump($constraint); }
                 foreach ($validVersions as $version) {
                     $totalTests++;
 
@@ -857,6 +866,19 @@ class ComposerConstraintsHelperTest extends TestCase
             [">=5.6 <8.0", "5.6", true],
             [">=5.6 <8.0", "7.4", true],
             [">=5.6 <8.0", "8.0", false],
+            // PHP 7.3 and above, and PHP 8.0, but not 9.x
+            ['>=7.3 <9.0.0', '5.6', false],
+            ['>=7.3 <9.0.0', '7.3', true],
+            ['>=7.3 <9.0.0', '7.4', true],
+            ['>=7.3 <9.0.0', '8.1', true],
+            ['>=7.3 <9.0.0', '8.4', true],
+            ['>=7.3 <9.0.0', '9.0', false],
+            ['7.*|8.*', '7.0', true],
+            ['7.*|8.*', '8.3', true],
+            ['7.*|8.*', '9.0', false],
+            ['7.*,8.*', '7.0', true],
+            ['7.*, 8.*', '8.3', true],
+            ['7.*, 8.*', '9.0', false],
         ];
 
         foreach ($testCases as $index => [$constraint, $phpVersion, $expected]) {
