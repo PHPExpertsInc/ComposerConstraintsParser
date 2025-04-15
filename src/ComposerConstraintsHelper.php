@@ -80,14 +80,13 @@ class ComposerConstraintsHelper
         // Split constraint by OR operator
         $constraints = str_replace([' ,', ', '], ',', $constraints);
         $constraints = str_replace([' -', '- '], '-', $constraints);
-        $orConstraints = preg_split('/[|,-]/', $constraints);
+        $orConstraints = preg_split('/[|-]/', $constraints);
 
         foreach ($orConstraints as $orConstraint) {
             $orConstraint = trim($orConstraint);
 
             // Split by AND operator (,)
-            $andConstraints = explode(' ', $orConstraint);
-//            $andConstraints = array_map('trim', explode([',', ' '], $orConstraint));
+            $andConstraints = preg_split('/[ ,]/', $orConstraint);
             $allAndSatisfied = true;
 
             foreach ($andConstraints as $singleConstraint) {
