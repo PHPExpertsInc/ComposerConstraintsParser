@@ -1,5 +1,5 @@
 {
-    "name": "phpexperts/composer-version-constraints",
+    "name": "phpexperts/composer-constraints-parser",
     "description": "A clean-room implementation of Composer's version constraints parser.",
     "keywords": [
         "composer",
