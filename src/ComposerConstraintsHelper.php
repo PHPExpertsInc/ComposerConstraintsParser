@@ -14,14 +14,6 @@
 
 namespace PHPExperts\ComposerVersionConstraints;
 
-// Assuming this is your base test case
-use Composer\Semver\Constraint\Constraint;
-use Composer\Semver\Semver;
-use Composer\Semver\VersionParser;
-
-// Useful for inspecting parsed constraints
-use UnexpectedValueException;
-
 /**
  * Utility class for working with Composer version constraints.
  *
@@ -31,24 +23,6 @@ use UnexpectedValueException;
  */
 class ComposerConstraintsHelper
 {
-    /**
-     * Check if a Composer version constraint is valid.
-     *
-     * @param string $constraint The version constraint to validate
-     * @return bool True if valid, false if invalid
-     */
-    public function isValidVersionConstraint(string $constraint): bool
-    {
-        $parser = new VersionParser();
-
-        try {
-            $parser->parseConstraints($constraint);
-            return true;
-        } catch (UnexpectedValueException $e) {
-            return false;
-        }
-    }
-
     /**
      * Ensures a version string has at least 3 parts (major.minor.patch).
      *

@@ -19,6 +19,7 @@ use PHPExperts\ComposerVersionConstraints\ComposerConstraintsHelper;
 use Composer\Semver\Constraint\Constraint;
 use Composer\Semver\Semver;
 use Composer\Semver\VersionParser;
+use UnexpectedValueException;
 
 class ComposerConstraintsHelperTest extends TestCase
 {
@@ -36,7 +37,7 @@ class ComposerConstraintsHelperTest extends TestCase
         ];
 
         foreach ($invalid as $c) {
-            self::assertFalse($this->constraints->isValidVersionConstraint($c));
+            self::assertFalse($this->isValidVersionConstraint($c));
         }
     }
 
@@ -128,7 +129,7 @@ class ComposerConstraintsHelperTest extends TestCase
             }
 
             // If it isn't a valid composer constraint, go ahead and skip the test.
-            if ($this->constraints->isValidVersionConstraint($constraint) === false) {
+            if ($this->isValidVersionConstraint($constraint) === false) {
                 dump("====== INVALID CONSTRAINT: $constraint ======");
                 file_put_contents('invalid-constraints.log', "$constraint\n", FILE_APPEND);
                 continue;
@@ -215,6 +216,24 @@ class ComposerConstraintsHelperTest extends TestCase
                 "Test case #{$index}: expected constraint '{$constraint}' to " .
                 ($expected ? "match" : "not match") . " PHP {$phpVersion}"
             );
+        }
+    }
+
+    /**
+     * Check if a Composer version constraint is valid.
+     *
+     * @param string $constraint The version constraint to validate
+     * @return bool True if valid, false if invalid
+     */
+    private function isValidVersionConstraint(string $constraint): bool
+    {
+        $parser = new VersionParser();
+
+        try {
+            $parser->parseConstraints($constraint);
+            return true;
+        } catch (UnexpectedValueException $e) {
+            return false;
         }
     }
 
